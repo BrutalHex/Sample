@@ -1,0 +1,82 @@
+---
+name: test
+permissions:
+  contents: write
+on:
+  workflow_call:
+  workflow_dispatch:
+jobs:
+  unit-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install tools
+        run: make tools
+
+      - name: Run tests
+        id: run-tests
+        run: |
+          make test | tee output.log
+          # Strip ANSI escape sequences so regex matching works reliably
+          sed -r 's/\x1B\[[0-9;]*[mK]//g' output.log > output.clean.log
+          # Parse Terraform summary line after color removal
+          SUMMARY_LINE=$(grep -E \
+            'Success![[:space:]]+[0-9]+ passed, [0-9]+ failed\.' \
+            output.clean.log || true)
+          if [ -n "$SUMMARY_LINE" ]; then
+            PASSED=$(echo "$SUMMARY_LINE" | \
+              grep -oE '[0-9]+ passed' | cut -d' ' -f1)
+            FAILED=$(echo "$SUMMARY_LINE" | \
+              grep -oE '[0-9]+ failed' | cut -d' ' -f1)
+          else
+            # Fallback patterns (older format) if summary line not found
+            PASSED=$(grep -oP 'passed: \K\d+' output.clean.log || echo 0)
+            FAILED=$(grep -oP 'failed: \K\d+' output.clean.log || echo 0)
+          fi
+          echo "passed=$PASSED" >> $GITHUB_OUTPUT
+          echo "failed=$FAILED" >> $GITHUB_OUTPUT
+
+      - name: Generate test report
+        run: |
+          DATE=$(date '+%Y-%m-%d %H:%M:%S')
+          PASSED=${{ steps.run-tests.outputs.passed }}
+          FAILED=${{ steps.run-tests.outputs.failed }}
+          STATUS_ICON='❌'
+          if [ "$FAILED" -eq 0 ]; then STATUS_ICON='✅'; fi
+          HEADER='| Execution Date | Passed | Failed | Status |'
+          SEP='|----------------|--------|--------|--------|'
+          ROW="| $DATE | $PASSED | $FAILED | $STATUS_ICON |"
+          TABLE_CONTENT="$(printf '%s\n%s\n%s\n' "$HEADER" "$SEP" "$ROW")"
+          export TABLE_CONTENT
+          README=README.md
+          BEGIN_MARK='<!-- BEGIN: test_auto_generated.md (included) -->'
+          END_MARK='<!-- END: test_auto_generated.md -->'
+          awk -v b="$BEGIN_MARK" -v e="$END_MARK" '
+            $0 == e { p=0 }
+            !p;
+            $0 == b {
+              print ENVIRON["TABLE_CONTENT"];
+              p=1
+            }
+          ' "$README" > "$README.tmp" && mv "$README.tmp" "$README"
+
+      - name: Commit and push test report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "actions@github.com"
+          if git diff --quiet README.md; then
+            echo 'No README changes.'
+            exit 0
+          fi
+          git add README.md
+          git commit -m "doc(test): update automated test results" || exit 0
+          git push origin HEAD:main || \
+            echo 'Push failed (check token perms)'
