@@ -54,30 +54,6 @@ MAIN: ePt9tJezvYHmuXVM
 BACKUP: bUnlo{b^(6}5M!Rk
 ```
 
-## Sample Input (`terraform.tfvars`)
-
-The file `infra/terraform.tfvars` demonstrates typical values:
-
-```hcl
-# Password operation: one of "none", "rotate", "swap".
-operation = "swap"
-
-# Target Kubernetes namespace for the secret.
-namespace = "app-namespace"
-
-# Name of the Kubernetes secret that will be managed.
-secret_name = "my-app-secret"
-
-# Optional annotations to attach to the secret metadata.
-annotations = {
-	owner       = "team-dev"
-	environment = "dev"
-	managed-by  = "terraform"
-}
-```
-
-Adjust these values (and optionally `password_length` or `passoword_override_special`) to fit your environment.
-
 ## Make Targets & Workflow
 
 All automation is driven via the `Makefile`. Common targets:
